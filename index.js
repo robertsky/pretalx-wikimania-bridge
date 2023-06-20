@@ -12,6 +12,8 @@ const _ = require('lodash');
 const axios = require('axios');
 const MWBot = require('mwbot');
 const packageJson = require('./package.json');
+const trunc = require('unicode-byte-truncate');
+const Title = require('mediawiki-title');
 
 const connPretalx = axios.create({
   baseURL: 'https://pretalx.com/api/events/' + process.env.PRETALX_EVENT_ID + '/',
@@ -57,12 +59,11 @@ let wmSubmissionListNew = [];
 let wmSubmissionListOld = []; // retrieve from wikimania.
 let wmSpearkersNew = [];
 let wmSpearkersOld = []; // retrieve from wikimania.
+let locSubmissionList = process.env.WIKIMANIA_PROGRAM_PAGE + '/data/submission list.json';
+let locSpeakerList = process.env.WIKIMANIA_PROGRAM_PAGE + '/data/speaker list.json';
 
 async function loadWmData() {
   await botLogin();
-
-  let locSubmissionList = process.env.WIKIMANIA_PROGRAM_PAGE + '/data/submission list.json';
-  let locSpeakerList = process.env.WIKIMANIA_PROGRAM_PAGE + '/data/speaker list.json';
 
   await connWM.read(locSubmissionList+'|'+locSpeakerList).then((response) => {
     let respPages = response.query.pages;
@@ -70,10 +71,10 @@ async function loadWmData() {
       let respKeys = _.keys(respPages);
       if (!_.includes(respKeys, 'missing')) {
         if (respPages.title === locSpeakerList) {
-          locSpeakerList = respPage.list
+          wmSpearkersOld = respPage.list;
         }
         if (respPages.title === locSubmissionList) {
-          locSubmissionList === respPage.list
+          wmSubmissionListOld === respPage.list;
         }
       }
 
@@ -110,18 +111,45 @@ async function getAllSubmissions(url, data) {
 }
 
 
-let importRoutine = getAllSubmissions('/submissions/?questions=all').then(pretalxData => {
+let importRoutine = getAllSubmissions('/submissions/?questions=2340,2329,2330&limit=25').then(pretalxData => {
 
   if (!!pretalxData.count) {
     _.forEach(pretalxData.results, submission => {
+      wmSpearkersNew = _.union(wmSpearkersNew, submission.speakers);
+      if (!!wmSpearkersOld.length) { // those that are left here are speaker profiles that can be deleted
+        _.forEach(submission.speakers, newSpeaker => {
+          _.remove(wmSpearkersOld, speaker => {
+            return speaker.code === newSpeaker.code;
+          });
+        });
+      }
+
       // get track from submission
       // add submission to the new submission list.
-      wmSubmissionListNew.push({
+
+      /* 
+        old submission format: {
+          id: 'code',
+          track: 'track name',
+          track_id: 'track_id',
+          state: 'state',
+          'pagename'
+        }
+      */
+
+      let submissionObj = {
         id: submission.code,
         track: submission.track.en,
         track_id: submission.track_id,
         state: submission.state,
-      });
+      };
+
+      wmSubmissionListNew.push(submissionObj);
+      if (!!wmSubmissionListOld.length) { // those that are left here are submissions that have been deleted on pretalx
+        _.remove(wmSubmissionListOld, oldSubmission => { 
+          return oldSubmission.id === submissionObj.id;
+        });
+      }
 
     })
   }
@@ -139,11 +167,20 @@ let importRoutine = getAllSubmissions('/submissions/?questions=all').then(pretal
       console.log('syncing speaker details: ' + speaker.code);
     });
     //build submission template:
+
+    let submissionTplStr = ''
+
+    let trunTitleStr = trunc(proposal.title.trim(), 200);
+    trunTitleStr = trunTitleStr.replaceAll(/[\[\]\{\}\|#<>\?\+\!]/g, '');
+    if (trunTitleStr !== proposal.title) {
+      submissionTplStr += '{{DISPLAYTITLE:'  + process.env.WIKIMANIA_PROGRAM_PAGE + '/Submissions/' + proposal.title + ' - ' + proposal.code + '}}\n\n';
+    }
     
-    let submissionTplStr = '{{2023 session details|\n' +
+    submissionTplStr += '{{2023 session details|\n' +
       'title=' + proposal.title + '|\n' +
       'speakers={{2023 speaker wrapper|' + speakersStr + '}}|\n' +
       'track={{2023 track name|' + proposal.track_id + '}}|\n' +
+      'track_id=' + proposal.track_id + '|\n' +
       'type={{2023 session type|' + proposal.submission_type_id + '}}|\n' +
       'state=' + proposal.state + '|\n' + 
       'duration=' + proposal.duration + '|\n' +
@@ -155,7 +192,6 @@ let importRoutine = getAllSubmissions('/submissions/?questions=all').then(pretal
     _.forEach(proposal.answers, answer => {
       switch (answer.question.id) {
       case 2340:
-        console.log(answer);
         submissionTplStr += 'ans_1=' + answer.answer + '|\n';
         break;
       case 2329:
@@ -199,8 +235,7 @@ let importRoutine = getAllSubmissions('/submissions/?questions=all').then(pretal
       }
     });
     submissionTplStr += '}}\n<languages/>';
-    console.log(submissionTplStr);
-    await connWM.edit(process.env.WIKIMANIA_PROGRAM_PAGE + '/Submissions/' + proposal.title + ' - ' + proposal.code, submissionTplStr,
+    await connWM.edit(process.env.WIKIMANIA_PROGRAM_PAGE + '/Submissions/' + trunTitleStr + ' - ' + proposal.code, submissionTplStr,
                 'Syncing proposal from pretalx');
     console.log('Syncing submission page: ' + process.env.WIKIMANIA_PROGRAM_PAGE + '/Submissions/' + proposal.title + ' - ' + proposal.code);
     await new Promise(resolve => setTimeout(resolve, 5000));
