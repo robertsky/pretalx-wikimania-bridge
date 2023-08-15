@@ -17,6 +17,7 @@ const Title = require('mediawiki-title');
 const nodePandoc = require('node-pandoc-promise');
 const tp = require('timers/promises');
 const URL = require('url').URL;
+const DateTime = require('luxon').DateTime;
 
 
 const stringIsAValidUrl = (s) => {
@@ -281,11 +282,22 @@ async function upsertSessions(pretalxData) {
     submissionTplStr += '{{2023 session details|\n' +
     'title=' + submission.title + '|\n' +
     'speakers={{2023 speaker wrapper|' + speakersStr + '}}|\n' +
+    'etherpad=' + submission.code + '|\n' +
     'track={{2023 track name|' + submission.track_id + '}}|\n' +
     'track_id=' + submission.track_id + '|\n' +
     'type={{2023 session type|' + submission.submission_type_id + '}}|\n' +
-    'state=' + submission.state + '|\n' + 
-    'duration=' + submission.duration + '|\n' +
+    'state=' + submission.state + '|\n';
+
+    if (submission.slot) {
+      if (submission.slot.room) {
+        let startTime = DateTime.fromISO(submission.slot.start);
+        let endTime = DateTime.fromISO(submission.slot.end);
+        submissionTplStr += 'room=' + submission.slot.room.en + '|\n' +
+        'start_datetime=[https://zonestamp.toolforge.org/' + startTime.toUnixInteger() + ' ' + startTime.toRFC2822() + ']|\n' +
+        'end_datetime=[https://zonestamp.toolforge.org/' + endTime.toUnixInteger() + ' ' + endTime.toRFC2822() + ']|\n';
+      }
+    }
+    submissionTplStr += 'duration=' + submission.duration + '|\n' +
     'do_not_record=' + submission.do_not_record + '|\n' +
     'locale=' + submission.content_locale + '|\n' +
     'abstract=' + abstract + '|\n' +
